@@ -110,8 +110,25 @@ class Car:
         for d in range(-90, 120, 45):
             self.check_radar(d)
 
+        # check collision with gate
+        x, y, w, h = self.hitbox()
+        t, b = self.get_current_gate()
+        if t > b:
+            c = t
+            t = b
+            b = c
+
+        if (x < t[0] and x + w > t[0]) or (x > t[0] and x + w < b[0]):
+            if (y > t[1] and y + h < b[1]) or (y < t[1] and y + h > b[1]):
+                self.next_gate = (self.next_gate + 1) % len(self.gates)
+
+    def hitbox(self):
+        return self.rot_rect
+
     def draw(self, win):
         win.blit(self.rotated_image, self.rot_rect.topleft)
+        pygame.draw.rect(win, (255, 0, 0), self.hitbox(), 2)
+
         if DEBUG == True:
             self.draw_radar(win)
 
