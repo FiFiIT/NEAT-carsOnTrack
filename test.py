@@ -1,9 +1,21 @@
-surround = []
-surround.append([(600, 825), 100])
-surround.append([(600, 825), 80])
-surround.append([(600, 825), 40])
-surround.append([(600, 825), 120])
-surround.append([(600, 825), 30])
-surround.append([(600, 825), 180])
+class Car:
+    def __init__(self, id):
+        self.id = id
 
-print(min(surround)[1])
+
+cars = []
+for i in range(1, 10):
+    cars.append(Car(i))
+
+# for car in cars:
+#     print(car.id)
+
+cars.remove(cars[4])
+
+for i, car in enumerate(cars):
+    if i == 4:
+        cars.remove(car)
+
+
+for i, car in enumerate(cars):
+    print(i, car.id)

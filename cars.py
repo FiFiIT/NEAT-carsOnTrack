@@ -16,20 +16,13 @@ RADIUS_LENGTH = 190
 
 STAT_FONT = pygame.font.SysFont('comicsans', 40)
 
-DEBUG = True
+DEBUG = False
 
 
 class Car:
-    def __init__(self, carsIMG, i=0, gates=[]):
-        # self.offset_x1 = 2
-        # self.offset_y1 = 20
-        # self.offset_x2 = 4
-        # self.offset_y2 = 20
-        # self.car_widht = 58
-        # self.car_height = 82
-
-        # self.rect = pygame.Rect(self.offset_x1 + self.car_number * (self.offset_x2 + self.car_widht),
-        #                         self.offset_y1 + self.cars_row*(self.offset_y2 + self.car_height), self.car_widht, self.car_height)
+    def __init__(self, carsIMG, i=0, gates=[], collider=None):
+        self.net = None
+        self.g = None
         self.offset_x1 = 20
         self.offset_x2 = 23
         self.offset_y1 = 2
@@ -37,10 +30,11 @@ class Car:
         self.car_widht = 83
         self.car_height = 58
         self.gates = gates
-
+        self.earn_reward = False
         self.cars_row = 0
         self.cars_col = 0
         self.car_number = i % 10
+        self.is_working = False
 
         if i % 20 > 9:
             self.cars_col = 1
@@ -70,17 +64,36 @@ class Car:
         self.radars = []
         self.radards_for_draw = []
         self.is_alive = True
+        self.radius = 31
         self.goal = False
         self.distance = 0
         self.time_spent = 0
-        self.MAX_SPEED = 25
+        self.MAX_SPEED = 10
         self.next_gate = 0
+        self.collider = collider
+        self.start_time = time.time()
+        self.limitSeconds = 3
+
+    def net_activate(self):
+        output = self.net.activate(self.get_data())
+
+        if output[0] > 0.5:
+            self.angle += 10
+        elif output[0] < -0.5:
+            self.angle -= 10
+
+        if output[1] > 0.5:
+            self.speedUp()
+        elif output[1] < -0.5:
+            self.speedDown()
 
     def get_current_gate(self):
-        return self.gates[self.next_gate]
+        return self.gates[self.next_gate % len(self.gates)]
 
     def speedUp(self):
         self.speed += 1
+        if self.speed > self.MAX_SPEED:
+            self.speed = self.MAX_SPEED
 
     def speedDown(self):
         self.speed -= 1
@@ -120,16 +133,29 @@ class Car:
 
         if (x < t[0] and x + w > t[0]) or (x > t[0] and x + w < b[0]):
             if (y > t[1] and y + h < b[1]) or (y < t[1] and y + h > b[1]):
-                self.next_gate = (self.next_gate + 1) % len(self.gates)
+                self.next_gate += 1
+                self.earn_reward = True
+                self.reset_time()
+
+        # check collision from track
+        if self.collider.collide(self.center, self.radius):
+            self.is_alive = False
+
+        if time.time() - self.start_time > self.limitSeconds:
+            self.is_alive = False
+
+    def reset_time(self):
+        self.start_time = time.time()
 
     def hitbox(self):
         return self.rot_rect
 
     def draw(self, win):
         win.blit(self.rotated_image, self.rot_rect.topleft)
-        pygame.draw.rect(win, (255, 0, 0), self.hitbox(), 2)
 
         if DEBUG == True:
+            # pygame.draw.rect(win, (255, 0, 0), self.hitbox(), 2)
+            pygame.draw.circle(win, (255, 0, 0), self.center, self.radius, 1)
             self.draw_radar(win)
 
     def draw_radar(self, win):
@@ -138,7 +164,7 @@ class Car:
             f"Lap: 0/0", 1, (255, 0, 0))
 
         txt_gate = STAT_FONT.render(
-            f"Gate: {self.next_gate}/{len(self.gates)}", 1, (255, 0, 0))
+            f"Gate: {self.next_gate % len(self.gates)}/{len(self.gates)}", 1, (255, 0, 0))
 
         win.blit(txt_lap, (WIN_WIDTH - 150, 10))
         win.blit(txt_gate, (WIN_WIDTH - 150, 40))
@@ -171,8 +197,6 @@ class Car:
         dist = int(
             math.sqrt(math.pow(x - self.center[0], 2) + math.pow(y - self.center[1], 2)))
         self.radars.append([(x, y), dist])
-        if dist < 39:
-            self.is_alive = False
 
     def get_data(self):
         radars = self.radars
@@ -185,13 +209,63 @@ class Car:
     def get_alive(self):
         return self.is_alive
 
-    def get_reward(self):
-        return self.distance / 50.0
+    def get_reward(self, reward_amount=1):
+        if self.earn_reward:
+            self.earn_reward = False
+            self.g.fitness += reward_amount
 
     def rot_center(self, angle):
         self.rotated_image = pygame.transform.rotate(self.car_img, self.angle)
         self.rot_rect = self.rotated_image.get_rect(
             center=self.car_img.get_rect(topleft=(self.x, self.y)).center)
+
+
+class CollisionDetection:
+    def __init__(self, background, track_color):
+        self.background = background
+        self.track_color = track_color
+
+    def collide(self, center_pos, radius):
+        circle_points = self.findPointInCircle(center_pos, radius)
+        return not self.onTrack(circle_points)
+
+    def findPointInCircle(self, point, radius=5):
+        circle = []
+        y = -radius + point[1]
+        while y <= radius + + point[1]:
+            circle.append((int(point[0]), int(y)))
+            y += 1
+
+        sqRadius = radius * radius
+        h = radius
+        dx = 1
+        while dx <= radius:
+            while dx * dx + h * h > sqRadius and h > 0:
+                h -= 1
+
+            y = -h + point[1]
+            while y <= h + point[1]:
+                circle.append((int(point[0] + dx), int(y)))
+                circle.append((int(point[0] - dx), int(y)))
+                y += 1
+
+            dx += 1
+
+        return circle
+
+    def onTrack(self, circle):
+        for p in circle:
+            if p[0] >= 0 and p[0] <= WIN_WIDTH and p[1] >= 0 and p[1] <= WIN_HEIGHT:
+                if self.background.get_at(p) != self.track_color:
+                    return False
+
+        return True
+
+    def allPointsOnTrack(self, pos):
+        circle = self.findPointInCircle(pos)
+        circle_ok = self.onTrack(circle)
+
+        return circle_ok
 
 
 class GatesGenerator:
@@ -255,6 +329,7 @@ class Gate:
         self.maxDist = ((0, 0), 0)
         self.meta = meta
         self.finished = False
+        self.linePoints = []
 
     def calculatePos(self):
         self.track_color = self.background.get_at(self.pos)
@@ -347,9 +422,10 @@ class Gate:
         circle = self.findPointInCircle(pos)
         circle_ok = self.onTrack(circle)
 
-        line = [(x, y) for (x, y) in self.BresenhamsLineAlgorithm(pos)]
+        self.linePoints = [(x, y)
+                           for (x, y) in self.BresenhamsLineAlgorithm(pos)]
 
-        line_ok = self.onTrack(line)
+        line_ok = self.onTrack(self.linePoints)
 
         return circle_ok and line_ok
 
@@ -432,16 +508,19 @@ class Gate:
 def main():
     run = True
     clock = pygame.time.Clock()
+    start_pos = (700, 825)
 
     win = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
     background = BG_IMG.convert()
 
-    gatesGen = GatesGenerator(background, (700, 825), 100, 30)
+    gatesGen = GatesGenerator(background, start_pos, 100, 30)
     gatesGen.generate()
     toPass = gatesGen.getGatesToPass()
 
+    collider = CollisionDetection(background, background.get_at(start_pos))
+
     cars_img = CARS.convert_alpha()
-    cars = [Car(cars_img, 19, toPass)]
+    cars = [Car(cars_img, 19, toPass, collider)]
 
     while run:
         clock.tick(30)
@@ -474,6 +553,7 @@ def main():
 def draw_window(win, BG, cars, gates=[]):
     win.blit(BG, (0, 0))
 
+    # if DEBUG == True:
     for gate in gates:
         gate.draw(win)
 
@@ -492,16 +572,35 @@ def eval_genomes(genomes, config):
     background = BG_IMG.convert()
     cars_img = CARS.convert_alpha()
 
+    start_pos = (700, 825)
+
+    gatesGen = GatesGenerator(background, start_pos, 100, 30)
+    gatesGen.generate()
+    toPass = gatesGen.getGatesToPass()
+
     run = True
     clock = pygame.time.Clock()
+    start_time = time.time()
+    limitSeconds = 2
+    gate_limit = 0
+
+    time_passed = False
+    remCars = []
+
+    collider = CollisionDetection(background, background.get_at(start_pos))
 
     for id, g in genomes:
-        net = neat.nn.FeedForwardNetwork.create(g, config)
-        nets.append(net)
+        car = Car(cars_img, id, toPass, collider)
+        car.net = neat.nn.FeedForwardNetwork.create(g, config)
         g.fitness = 0
-        ge.append(g)
+        car.g = g
 
-        cars.append(Car(cars_img, id))
+        # net = neat.nn.FeedForwardNetwork.create(g, config)
+        # nets.append(net)
+        # g.fitness = 0
+        # ge.append(g)
+
+        cars.append(car)
 
     while run:
         clock.tick(30)
@@ -512,57 +611,59 @@ def eval_genomes(genomes, config):
                 pygame.quit()
                 quit()
 
+        for car in remCars:
+            cars.remove(car)
+        remCars = []
+
         if len(cars) == 0:
             run = False
             break
 
-        for index, car in enumerate(cars):
+        time_passed = False
+        if time.time() - start_time > limitSeconds:
+            time_passed = True
+            start_time = time.time()
+            gate_limit += 1
+
+        for car in cars:
             car.update()
 
-            output = nets[index].activate(car.get_data())
-
-            if output[0] > 0.5:
-                car.angle += 10
-            elif output[0] < -0.5:
-                car.angle -= 10
-
-            if output[1] > 0.5:
-                car.speedUp()
-            elif output[1] < -0.5:
-                car.speedDown()
+            car.net_activate()
+            car.get_reward()
 
             if not car.is_alive:
-                ge[index].fitness -= 1
-                cars.pop(index)
-                nets.pop(index)
-                ge.pop(index)
+                car.g.fitness -= 1
+                remCars.append(car)
 
-            if car.speed > 5:
-                ge[index].fitness += 0.1
-
-            if car.speed > 10:
-                ge[index].fitness += 0.1
-
-        draw_window(win, background, cars)
+        draw_window(win, background, cars, gatesGen.getAllGates())
 
 
 def run(config_path):
-    config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                                neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                                config_path)
+    # config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction,
+    #                             neat.DefaultSpeciesSet, neat.DefaultStagnation,
+    #                             config_path)
 
-    p = neat.Population(config)
+    # p = neat.Population(config)
+
+    # p.add_reporter(neat.StdOutReporter(True))
+    # p.add_reporter(neat.StatisticsReporter())
+    # p.add_reporter(neat.Checkpointer(20))
+
+    # winner = p.run(eval_genomes, 20)
+    # print('\nBest genome:\n{!s}'.format(winner))
+
+    p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-158')
 
     p.add_reporter(neat.StdOutReporter(True))
     p.add_reporter(neat.StatisticsReporter())
+    p.add_reporter(neat.Checkpointer(20))
 
-    winner = p.run(eval_genomes, 5)
-    print('\nBest genome:\n{!s}'.format(winner))
+    p.run(eval_genomes, 200)
 
 
-# if __name__ == "__main__":
-#     local_dir = os.path.dirname(__file__)
-#     config_path = os.path.join(local_dir, "config-feedforward.txt")
-#     run(config_path)
+if __name__ == "__main__":
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, "config-feedforward.txt")
+    run(config_path)
 
-main()
+# main()
